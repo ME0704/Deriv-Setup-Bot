@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import config
@@ -170,4 +171,13 @@ def handle_save(call):
 
 if __name__ == "__main__":
     print("[READY] Listener service online (2-column layout). Awaiting /pairs...")
-    bot.infinity_polling()
+    
+    # Wrap the polling in an infinite loop to catch network disconnects
+    while True:
+        try:
+            # Extended timeouts to prevent hasty drops
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"\n[NETWORK WARNING] Telegram API connection dropped: {e}")
+            print("Quietly reconnecting in 5 seconds...")
+            time.sleep(5)
