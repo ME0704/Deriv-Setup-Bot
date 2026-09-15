@@ -72,7 +72,7 @@ def main():
         return
 
     verified_symbols = mt5_layer.verify_market_watch_symbols(config.SYMBOLS)
-    alert_mgr = AlertManager(config.ALERT_HISTORY_FILE, config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+    alert_mgr = AlertManager(config.ALERT_HISTORY_FILE, config.TELEGRAM_BOT_TOKEN)
 
     try:
         while True:
