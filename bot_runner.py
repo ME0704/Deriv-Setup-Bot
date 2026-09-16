@@ -1,4 +1,5 @@
 import time
+import pandas as pd
 import config
 import mt5_layer
 import core_logic
@@ -18,8 +19,11 @@ def run_scan_cycle(alert_mgr: AlertManager, verified_symbols: list):
         trend_info = core_logic.determine_trend(daily_df, n=config.FRACTAL_WINDOW)
         daily_trend = trend_info["direction"]
         
-        # FRESHNESS BOUNDARY: The open time of the most recent closed Daily candle
-        today_boundary = daily_df.iloc[-1]['time']
+        # - -- THE FIX: STRICTLY TODAY'S BOUNDARY ---
+        # daily_df.iloc[-1] is yesterday's closed candle. 
+        # By adding 1 day, we force the boundary to be exactly 00:00 of the CURRENT day.
+        # Any BOS from yesterday (like 8:00 PM) will now be completely ignored.
+        today_boundary = daily_df.iloc[-1]['time'] + pd.Timedelta(days=1)
 
         valid_setups = []
 

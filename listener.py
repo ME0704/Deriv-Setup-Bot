@@ -12,6 +12,9 @@ bot = telebot.TeleBot(config.TELEGRAM_BOT_TOKEN)
 # In-memory buffer to hold user pair selections before saving
 user_drafts = {}
 
+# Track failed attempts in memory: { "chat_id": {"attempts": int, "lockout_until": datetime} }
+failed_attempts = {}
+
 # --- PAYMENT & CONTACT CONFIGURATION ---
 ADMIN_TELEGRAM_USERNAME = "emmas_wrld"  # Without '@'
 MOBILE_MONEY_DETAILS = "MTN / Airtel: +256 704 598 003 (Name: Modi Emmanuel)"
@@ -185,6 +188,160 @@ def process_key_activation(chat_id: str, entered_key: str):
         reply_markup=markup,
         parse_mode="Markdown"
     )
+
+# --- ADMIN COMMAND: GENERATE BOUND & FORMATTED KEY ---
+@bot.message_handler(commands=['genkey'])
+def generate_key(message):
+    chat_id = str(message.chat.id)
+    if chat_id != config.ADMIN_CHAT_ID:
+        return
+
+    # Usage:
+    # /genkey 30              -> Generates an open key for 30 days
+    # /genkey 30 @username    -> Binds key to a specific Telegram username
+    # /genkey 30 123456789    -> Binds key to a specific Telegram User ID
+    parts = message.text.split()
+    days = 30
+    assigned_target = None
+
+    if len(parts) >= 2:
+        try:
+            days = int(parts[1])
+        except ValueError:
+            bot.reply_to(message, "Usage: `/genkey <days> [@username or user_id]`\nExample: `/genkey 30 @trader_dan`", parse_mode="Markdown")
+            return
+
+    if len(parts) >= 3:
+        # Strip '@' and lowercase for consistency
+        assigned_target = parts[2].replace("@", "").strip().lower()
+
+    # Generate a 12-byte segmented enterprise key: MSR-XXXX-XXXX-XXXX
+    raw = secrets.token_hex(6).upper()
+    new_key = f"MSR-{raw[0:4]}-{raw[4:8]}-{raw[8:12]}"
+
+    keys_db = load_json(config.KEYS_DB)
+    keys_db[new_key] = {
+        "days": days,
+        "assigned_to": assigned_target,  # None, username, or chat_id
+        "used": False,
+        "used_by": None,
+        "created_at": datetime.now().isoformat()
+    }
+    save_json(config.KEYS_DB, keys_db)
+
+    target_text = f"Bound to: `@{assigned_target}`" if assigned_target else "Status: `Unbound (Any user can redeem)`"
+    
+    bot.reply_to(
+        message,
+        f"*LICENSE KEY GENERATED*\n\n"
+        f"Key: `{new_key}`\n"
+        f"Duration: `{days} Days`\n"
+        f"{target_text}\n\n"
+        f"Send this exact code to the client.",
+        parse_mode="Markdown"
+    )
+
+# --- USER ACTIVATION WITH BINDING & ANTI-BRUTE-FORCE ---
+@bot.message_handler(commands=['activate'])
+def activate_command(message):
+    chat_id = str(message.chat.id)
+    parts = message.text.split()
+    
+    if len(parts) < 2:
+        bot.send_message(chat_id, "Please include your license key:\n`/activate MSR-XXXX-XXXX-XXXX`", parse_mode="Markdown")
+        return
+        
+    process_secure_activation(message, parts[1].strip().upper())
+
+def process_secure_activation(message, entered_key: str):
+    chat_id = str(message.chat.id)
+    username = (message.from_user.username or "").lower()
+    now = datetime.now()
+
+    # 1. Anti-Brute-Force Check
+    if chat_id in failed_attempts:
+        lockout = failed_attempts[chat_id].get("lockout_until")
+        if lockout and now < lockout:
+            wait_min = int((lockout - now).total_seconds() / 60) + 1
+            bot.send_message(chat_id, f"Account locked due to too many failed attempts. Try again in {wait_min} minutes.")
+            return
+
+    keys_db = load_json(config.KEYS_DB)
+
+    # 2. Key Validity Check
+    if entered_key not in keys_db:
+        record_failed_attempt(chat_id)
+        bot.send_message(chat_id, "Invalid activation key. Please verify the code and try again.")
+        return
+
+    key_record = keys_db[entered_key]
+
+    # 3. Double-Spend Check
+    if key_record["used"]:
+        bot.send_message(chat_id, "This license key has already been redeemed.")
+        return
+
+    # 4. Identity Binding Check (Username or Chat ID)
+    bound_target = key_record.get("assigned_to")
+    if bound_target:
+        # Check against both the username and numeric chat_id
+        if bound_target != username and bound_target != chat_id:
+            bot.send_message(
+                chat_id, 
+                "Unauthorized: This license key is cryptographically assigned to another Telegram account."
+            )
+            return
+
+    # Clear failed attempt counter upon valid entry
+    if chat_id in failed_attempts:
+        del failed_attempts[chat_id]
+
+    # 5. Apply Subscription
+    days_to_add = key_record["days"]
+    users = load_json(config.USERS_DB)
+    current_expiry = now
+
+    if chat_id in users and users[chat_id].get("expiry"):
+        old_expiry = datetime.fromisoformat(users[chat_id]["expiry"])
+        if old_expiry > current_expiry:
+            current_expiry = old_expiry
+
+    new_expiry = current_expiry + timedelta(days=days_to_add)
+    users[chat_id] = {
+        "expiry": new_expiry.isoformat(),
+        "username": username
+    }
+    save_json(config.USERS_DB, users)
+
+    # Mark key as consumed
+    key_record["used"] = True
+    key_record["used_by"] = chat_id
+    key_record["redeemed_at"] = now.isoformat()
+    save_json(config.KEYS_DB, keys_db)
+
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Configure Pairs", callback_data="nav_pairs"))
+    
+    bot.send_message(
+        chat_id,
+        f"*LICENSE ACTIVATED SUCCESSFULLY*\n\n"
+        f"• Plan Duration: `{days_to_add} Days`\n"
+        f"• Valid Until: `{new_expiry.strftime('%Y-%m-%d %H:%M EAT')}`\n\n"
+        f"Tap below to select your active markets.",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+
+def record_failed_attempt(chat_id: str):
+    now = datetime.now()
+    if chat_id not in failed_attempts:
+        failed_attempts[chat_id] = {"attempts": 1, "lockout_until": None}
+    else:
+        failed_attempts[chat_id]["attempts"] += 1
+
+    if failed_attempts[chat_id]["attempts"] >= 3:
+        failed_attempts[chat_id]["lockout_until"] = now + timedelta(minutes=30)
+        bot.send_message(chat_id, "Too many failed attempts. You have been locked out for 30 minutes.")
 
 # --- CORE ROUTING ---
 
@@ -429,6 +586,62 @@ def handle_save(call):
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("Back to Dashboard", callback_data="nav_home"))
     bot.edit_message_text(text, chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.message_handler(commands=['stats', 'admin'])
+def admin_dashboard(message):
+    chat_id = str(message.chat.id)
+    if chat_id != config.ADMIN_CHAT_ID:
+        return
+
+    # 1. Load Databases
+    users = load_json(config.USERS_DB)
+    keys_db = load_json(config.KEYS_DB)
+
+    # 2. Calculate User Metrics
+    active_users = 0
+    expired_users = 0
+    now = datetime.now()
+
+    for uid, data in users.items():
+        if "expiry" in data:
+            if now < datetime.fromisoformat(data["expiry"]):
+                active_users += 1
+            else:
+                expired_users += 1
+
+    # 3. Calculate Revenue & Keys (Assuming $30 per 30-day key)
+    MONTHLY_PRICE = 30
+    total_revenue = 0
+    used_keys = 0
+    unused_keys = 0
+
+    for key, data in keys_db.items():
+        if data.get("used"):
+            used_keys += 1
+            # Calculate revenue based on the duration of the key sold
+            months_sold = data.get("days", 30) / 30
+            total_revenue += (months_sold * MONTHLY_PRICE)
+        else:
+            unused_keys += 1
+
+    # 4. Format the Dashboard Report
+    report = (
+        "📊 *MS RADAR ADMIN DASHBOARD*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "*💰 FINANCIAL OVERVIEW*\n"
+        f"• Total Est. Revenue: `${total_revenue:,.2f}`\n\n"
+        "*👥 USER METRICS*\n"
+        f"• Active Subscriptions: `{active_users}`\n"
+        f"• Expired Subscriptions: `{expired_users}`\n"
+        f"• Total Users in DB: `{len(users)}`\n\n"
+        "*🔑 LICENSE KEY STATUS*\n"
+        f"• Keys Redeemed: `{used_keys}`\n"
+        f"• Keys Pending (Unused): `{unused_keys}`\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "_Data pulled live from local JSON databases._"
+    )
+
+    bot.send_message(chat_id, report, parse_mode="Markdown")
 
 if __name__ == "__main__":
     print("[READY] Interactive Listener & Dashboard online with Crypto (TRC20) support...")
