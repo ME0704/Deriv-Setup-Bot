@@ -7,7 +7,6 @@ import config
 
 class AlertManager:
     def __init__(self, history_file: str, bot_token: str):
-        # Notice we removed chat_id from the initialization
         self.history_file = history_file
         self.bot_token = bot_token
         self.history = self._load_history()
@@ -29,16 +28,36 @@ class AlertManager:
             print(f"[ERROR] Failed to save alert history: {e}")
 
     def _get_subscribers_for_symbol(self, symbol: str) -> list:
-        """Returns a list of chat IDs subscribed to this specific symbol."""
-        if not os.path.exists(config.SUBSCRIPTIONS_FILE):
-            return []
-        try:
-            with open(config.SUBSCRIPTIONS_FILE, 'r') as f:
-                subs = json.load(f)
-            # Find all users where the symbol is in their opted-in list
-            return [chat_id for chat_id, pairs in subs.items() if symbol in pairs]
-        except Exception:
-            return []
+            """Returns a list of ACTIVE chat IDs subscribed to this specific symbol."""
+            if not os.path.exists(config.SUBSCRIPTIONS_FILE):
+                return []
+                
+            try:
+                with open(config.SUBSCRIPTIONS_FILE, 'r') as f:
+                    subs = json.load(f)
+                    
+                # Load the users database to verify expiration dates
+                valid_users = []
+                if os.path.exists(config.USERS_DB):
+                    with open(config.USERS_DB, 'r') as f:
+                        users_db = json.load(f)
+                        for user_id, user_data in users_db.items():
+                            if "expiry" in user_data:
+                                expiry = datetime.fromisoformat(user_data["expiry"])
+                                # Add timezon-naive current time check
+                                if datetime.now() < expiry:
+                                    valid_users.append(user_id)
+                                    
+                # Admin always gets alerts regardless of expiration
+                if config.ADMIN_CHAT_ID not in valid_users and config.ADMIN_CHAT_ID:
+                    valid_users.append(config.ADMIN_CHAT_ID)
+                    
+                # Return only users who are both Subscribed to the symbol AND have an active license
+                return [chat_id for chat_id, pairs in subs.items() if symbol in pairs and chat_id in valid_users]
+                
+            except Exception as e:
+                print(f"[ERROR] Reading subscriptions: {e}")
+                return []
 
     def generate_event_id(self, symbol: str, direction: str, reject_time: str, bos_time: str) -> str:
         raw_key = f"{symbol}|D1H4|{direction}|{reject_time}|{bos_time}"
@@ -50,7 +69,6 @@ class AlertManager:
         # 1. Fetch exactly who wants this alert
         subscribers = self._get_subscribers_for_symbol(symbol)
         if not subscribers:
-            # If nobody is subscribed to Step Index, quietly skip sending.
             return False 
 
         reject_time = rule_data['time']
@@ -80,28 +98,26 @@ class AlertManager:
         
         dynamic_str += " The setup was officially triggered by a fresh 4H Break of Structure."
 
+        # Constructing the message
         msg = f"*{direction.upper()} BIAS CONFIRMED*\n"
-        msg += f"*Asset:* {symbol} (D1 -> H4)\n"
-        msg += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        msg += f"*Asset:* {symbol} (D1 -> H4)\n\n"
         
-        msg += "*[ SYNTHESIS ]*\n"
         msg += f"{dynamic_str}\n\n"
         
-        msg += "*[ DATA POINTS ]*\n"
         msg += f"• *Primary Rule:* {rule_data['rule_name']}\n"
         msg += f"• *Daily Trend:* {alignment}\n"
         msg += f"• *Break Level:* {bos_data['bos_price']:.4f}\n"
         msg += f"• *Break Time:* {bos_str}\n\n"
         
         if upgrade or warning:
-            msg += "*[ MODIFIERS ]*\n"
             if upgrade:
                 msg += "**+ GRADE A+:** Favorable liquidity sweep confirmed.\n"
             if warning:
-                msg += "**- WARNING:** Previous extreme was compromised. Use confirmation entry.\n"
+                # Dynamically assign "High" or "Low" based on the direction
+                adverse_level = "High" if direction.lower() == "bullish" else "Low"
+                msg += f"**- WARNING:** Previous Day {adverse_level} has been taken out before forming this setup. Use confirmation entry.\n"
             msg += "\n"
 
-        msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
         msg += "_Note: This is a directional bias, not an execution signal. Apply your entry model._\n"
 
         eat_time = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
@@ -115,7 +131,8 @@ class AlertManager:
             payload = {
                 "chat_id": chat_id, 
                 "text": msg,
-                "parse_mode": "Markdown"
+                "parse_mode": "Markdown",
+                "protect_content": True
             }
             try:
                 res = requests.post(url, json=payload, timeout=10)
