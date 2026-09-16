@@ -1,6 +1,7 @@
 # Environments
 .env
 __pycache__/
+*.pyc
 
 # Database/Logs
 alert_history.json
