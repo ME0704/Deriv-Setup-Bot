@@ -117,15 +117,25 @@ def check_ltf_confirmation(ltf_df: pd.DataFrame, direction: str, reject_time: pd
 
 def check_modifiers(df: pd.DataFrame, direction: str) -> dict:
     if len(df) < 2: return {"upgrade": False, "warning": False}
+    
+    # Because we are now passing raw_daily_df, 'today' is the live forming candle (e.g. Sep 16)
+    # and 'yesterday' is the last closed candle (e.g. Sep 15)
     today, yesterday = df.iloc[-1], df.iloc[-2]
     
     if direction == "Bullish":
-        return {
-            "upgrade": today['low'] < yesterday['low'] and today['close'] > yesterday['low'],
-            "warning": today['high'] > yesterday['high']
-        }
-    else:
-        return {
-            "upgrade": today['high'] > yesterday['high'] and today['close'] < yesterday['high'],
-            "warning": today['low'] < yesterday['low']
-        }
+        # Favorable: Swept the Low and is currently pushing back up
+        is_upgrade = today['low'] < yesterday['low'] and today['close'] > yesterday['low']
+        
+        # Adverse: Swept the High. BUT we suppress this warning if the A+ setup is present.
+        is_warning = today['high'] > yesterday['high'] and not is_upgrade
+        
+        return {"upgrade": is_upgrade, "warning": is_warning}
+        
+    else: # Bearish
+        # Favorable: Swept the High and is currently pushing back down
+        is_upgrade = today['high'] > yesterday['high'] and today['close'] < yesterday['high']
+        
+        # Adverse: Swept the Low. BUT we suppress this warning if the A+ setup is present.
+        is_warning = today['low'] < yesterday['low'] and not is_upgrade
+        
+        return {"upgrade": is_upgrade, "warning": is_warning}

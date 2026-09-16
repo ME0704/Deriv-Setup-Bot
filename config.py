@@ -14,7 +14,6 @@ SYMBOLS = [
     "Volatility 5 Index", "Volatility 5 (1s) Index", "Volatility 10 Index","Volatility 10 (1s) Index", "Volatility 15 Index", "Volatility 15 (1s) Index", 
     "Volatility 25 Index", "Volatility 25 (1s) Index", "Volatility 30 Index", "Volatility 30 (1s) Index", "Volatility 50 Index", "Volatility 50 (1s) Index", 
     "Volatility 75 Index", "Volatility 75 (1s) Index", "Volatility 90 Index", "Volatility 90 (1s) Index", "Volatility 100 Index", "Volatility 100 (1s) Index",
-    "Volatility 150 (1s) index", "Volatility 250 (1s) index",
     "Boom 500 Index", "Boom 1000 Index", "Crash 500 Index", "Crash 1000 Index", 
     "Step Index", "Jump 10 Index","Jump 25 Index", "Jump 50 Index", "Jump 75 Index", "Jump 100 Index",
 ]

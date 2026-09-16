@@ -99,7 +99,8 @@ class AlertManager:
         dynamic_str += " The setup was officially triggered by a fresh 4H Break of Structure."
 
         # Constructing the message
-        msg = f"*{direction.upper()} BIAS CONFIRMED*\n"
+        trade_action = "BUY" if direction.lower() == "bullish" else "SELL"
+        msg = f"*{trade_action} BIAS CONFIRMED*\n"
         msg += f"*Asset:* {symbol} (D1 -> H4)\n\n"
         
         msg += f"{dynamic_str}\n\n"
@@ -121,7 +122,7 @@ class AlertManager:
         msg += "_Note: This is a directional bias, not an execution signal. Apply your entry model._\n"
 
         eat_time = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
-        msg += f"Sent: {eat_time} EAT"
+        
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         any_success = False

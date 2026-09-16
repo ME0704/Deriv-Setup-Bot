@@ -1,5 +1,7 @@
 import time
+from datetime import datetime
 import pandas as pd
+import MetaTrader5 as mt5  # Added this import at the top
 import config
 import mt5_layer
 import core_logic
@@ -19,7 +21,7 @@ def run_scan_cycle(alert_mgr: AlertManager, verified_symbols: list):
         trend_info = core_logic.determine_trend(daily_df, n=config.FRACTAL_WINDOW)
         daily_trend = trend_info["direction"]
         
-        # - -- THE FIX: STRICTLY TODAY'S BOUNDARY ---
+        # --- THE FIX: STRICTLY TODAY'S BOUNDARY ---
         # daily_df.iloc[-1] is yesterday's closed candle. 
         # By adding 1 day, we force the boundary to be exactly 00:00 of the CURRENT day.
         # Any BOS from yesterday (like 8:00 PM) will now be completely ignored.
@@ -40,7 +42,16 @@ def run_scan_cycle(alert_mgr: AlertManager, verified_symbols: list):
             )
             
             if confirmation["confirmed"]:
-                modifiers = core_logic.check_modifiers(daily_df, direction)
+                # --- THE SWEEP LOGIC FIX ---
+                # We need the LIVE forming daily candle (today) to check the sweep properly.
+                # This fetches the last 2 raw candles directly from the broker.
+                live_rates = mt5.copy_rates_from_pos(symbol, config.TIMEFRAME_HTF, 0, 2)
+                live_daily_df = pd.DataFrame(live_rates)
+                
+                # Pass the LIVE dataframe to check_modifiers, not the closed one
+                modifiers = core_logic.check_modifiers(live_daily_df, direction)
+                # ---------------------------
+
                 valid_setups.append({
                     "direction": direction,
                     "rejection": rejection,
@@ -87,5 +98,40 @@ def main():
     finally:
         mt5_layer.shutdown_mt5()
 
+def get_latest_4h_candle_time():
+    """Fetches the exact open time of the currently forming 4H candle directly from the Deriv broker."""
+    # Using Volatility 75 Index as a reliable 24/7 benchmark for the broker's internal clock
+    rates = mt5.copy_rates_from_pos("Volatility 75 Index", mt5.TIMEFRAME_H4, 0, 1)
+    if rates is not None and len(rates) > 0:
+        return rates[0]['time']
+    return 0
+
 if __name__ == "__main__":
-    main()
+    print("[SYSTEM] MS Synthetics connected to MT5.")
+    
+    # 1. Run an initial scan immediately on boot so you don't have to wait for the next 4H boundary
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Executing initial boot scan...")
+    
+    # -> CALL YOUR MAIN SCAN FUNCTION HERE
+    main() 
+    
+    # 2. Record the broker's currently forming 4H candle
+    last_known_4h_candle = get_latest_4h_candle_time()
+    print("[SYSTEM] 24/7 Scheduler Active. Monitoring broker 4H boundaries...")
+
+    # 3. Enter the 24/7 Loop
+    while True:
+        # Check the MT5 terminal every 60 seconds
+        time.sleep(60)
+        
+        current_4h_candle = get_latest_4h_candle_time()
+        
+        # If the broker has opened a new 4H candle, the previous one just officially closed!
+        if current_4h_candle > last_known_4h_candle:
+            print(f"\n[!] 4H Boundary Crossed at {datetime.now().strftime('%H:%M:%S')}. Initiating Scan...")
+            
+            # -> CALL YOUR MAIN SCAN FUNCTION HERE AGAIN
+            main()
+            
+            # Update the tracker to wait for the next 4-hour cycle
+            last_known_4h_candle = current_4h_candle
