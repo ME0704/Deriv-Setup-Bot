@@ -5,3 +5,12 @@ __pycache__/
 # Database/Logs
 alert_history.json
 *.log
+
+keys.json
+*.log
+
+subscriptions.json
+*.log
+
+users.json
+*.log
