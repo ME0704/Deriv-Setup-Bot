@@ -4,14 +4,12 @@ __pycache__/
 *.pyc
 
 # Database/Logs
+users.json
+keys.json
+subscriptions.json
 alert_history.json
 *.log
 
-keys.json
-*.log
-
-subscriptions.json
-*.log
-
-users.json
-*.log
+# Archives
+*.rar
+*.zip

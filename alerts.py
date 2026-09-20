@@ -133,7 +133,7 @@ class AlertManager:
                 "chat_id": chat_id, 
                 "text": msg,
                 "parse_mode": "Markdown",
-                "protect_content": True
+                "protect_content": False
             }
             try:
                 res = requests.post(url, json=payload, timeout=10)
