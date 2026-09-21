@@ -112,7 +112,7 @@ class AlertManager:
         
         if upgrade or warning:
             if upgrade:
-                msg += "**+ GRADE A+:** Favorable liquidity sweep confirmed.\n"
+                msg += "** A+ SETUP:** Favorable liquidity sweep confirmed.\n"
             if warning:
                 # Dynamically assign "High" or "Low" based on the direction
                 adverse_level = "High" if direction.lower() == "bullish" else "Low"
