@@ -78,56 +78,63 @@ class AlertManager:
         if event_id in self.history:
             return False 
 
-        bos_str = bos_time.strftime("%A, %Y-%m-%d %H:%M")
-        reject_date_str = reject_time.strftime("%Y-%m-%d")
+        is_bullish = direction.lower() == "bullish"
+        header_icon = "🟢" if is_bullish else "🔴"
+        side = "BUY" if is_bullish else "SELL"
 
-        if htf_trend == direction:
-            alignment = "Aligned"
-        elif htf_trend == "None":
-            alignment = "No Daily trend established yet"
-        else:
-            alignment = "Counter-trend (Not aligned)"
+        # Determine exact key level rejection shape & type with formed date
+        shape = rule_data.get('shape', 'V')
+        formed_date_str = reject_time.strftime("%a %d %b")  # e.g., Wed 26 Aug
 
         if rule_data["rule_name"] == "Key level in range":
-            dynamic_str = f"The Daily timeframe formed a {rule_data['shape']}-shape rejection at {rule_data['price']:.4f} on {reject_date_str}. This occurred safely inside the structural boundaries of {rule_data['bound_low']:.4f} and {rule_data['bound_high']:.4f}."
+            rej_type = f"{shape}-shape KL · Formed {formed_date_str}"
         elif rule_data["rule_name"] == "Previous candle sweep":
-            dynamic_str = f"The Daily timeframe swept liquidity at {rule_data['swept_level']:.4f} and aggressively rejected from {rule_data['price']:.4f} on {reject_date_str}."
+            rej_type = f"{shape}-shape KL (Liquidity Sweep) · Formed {formed_date_str}"
         else:
-            set_date = rule_data['level_set_time'].strftime("%Y-%m-%d")
-            dynamic_str = f"Price returned to an untested open/close (OC) level established on {set_date}, rejecting perfectly at {rule_data['price']:.4f} on {reject_date_str}."
-        
-        dynamic_str += " The setup was officially triggered by a fresh 4H Break of Structure."
+            rej_type = f"OC Level · Formed {formed_date_str}"
 
-        # Constructing the message
-        trade_action = "BUY" if direction.lower() == "bullish" else "SELL"
-        msg = f"*{trade_action} BIAS CONFIRMED*\n"
-        msg += f"*Asset:* {symbol} (D1 -> H4)\n\n"
-        
-        msg += f"{dynamic_str}\n\n"
-        
-        msg += f"• *Primary Rule:* {rule_data['rule_name']}\n"
-        msg += f"• *Daily Trend:* {alignment}\n"
-        msg += f"• *Break Level:* {bos_data['bos_price']:.4f}\n"
-        msg += f"• *Break Time:* {bos_str}\n\n"
-        
-        if upgrade or warning:
-            if upgrade:
-                msg += "** A+ SETUP:** Favorable liquidity sweep confirmed.\n"
-            if warning:
-                # Dynamically assign "High" or "Low" based on the direction
-                adverse_level = "High" if direction.lower() == "bullish" else "Low"
-                msg += f"**- WARNING:** Previous Day {adverse_level} has been taken out before forming this setup. Use confirmation entry.\n"
-            msg += "\n"
+        # Trend alignment badge
+        if htf_trend == direction:
+            trend_badge = "Aligned ✅"
+        elif htf_trend == "None":
+            trend_badge = "None established"
+        else:
+            trend_badge = "Counter-Trend ⚠️"
 
-        msg += "_Note: This is a directional bias, not an execution signal. Apply your entry model._\n"
+        bos_str = bos_time.strftime("%a %d %b, %H:%M EAT")
+        clean_symbol = symbol.replace(" Index", "")
 
-        eat_time = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
-        
+        # Format price cleanly
+        rej_price = f"{rule_data['price']:.2f}" if rule_data['price'] >= 100 else f"{rule_data['price']:.4f}"
+        bos_price = f"{bos_data['bos_price']:.2f}" if bos_data['bos_price'] >= 100 else f"{bos_data['bos_price']:.4f}"
+
+        # Construct the streamlined alert
+        lines = [
+            f"{header_icon} {side} BIAS · {clean_symbol} [D1 ➔ H4]",
+            "",
+            f"🎯 D1 Rejection: {rej_price} ({rej_type})",
+            f"⚡ 4H External BOS: {bos_price} at {bos_str}",
+            f"📊 Daily Trend: {trend_badge}",
+        ]
+
+        if upgrade:
+            lines.append("\n🔥 Grade A+ (Liquidity sweep confirmed)")
+
+        if warning:
+            adverse_level = "High" if is_bullish else "Low"
+            lines.append(f"\n⚠️ Warning: Previous Daily {adverse_level} has been taken. Use confirmation entry.")
+
+        lines += [
+            "",
+            "⏳ Bias only. Execute via your own model."
+        ]
+
+        msg = "\n".join(lines)
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         any_success = False
 
-        # 2. Loop through only the users who subscribed to this pair
+        # 2. Dispatch to subscribers
         for chat_id in subscribers:
             payload = {
                 "chat_id": chat_id, 
